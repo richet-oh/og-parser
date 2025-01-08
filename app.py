@@ -20,7 +20,7 @@ def parse_og_metadata(url, retry_count=5):
     for attempt in range(retry_count):
         try:
             headers = {
-                'User-Agent': random.choice(USER_AGENTS),
+                'User-Agent': USER_AGENTS[attempt % len(USER_AGENTS)],
                 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
                 'Accept-Language': 'en-US,en;q=0.5',
                 'Accept-Encoding': 'gzip, deflate, br',
