@@ -4,8 +4,8 @@ from bs4 import BeautifulSoup
 from urllib.parse import urljoin
 import random
 import urllib3
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 import time
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # List of common user agents for rotation
 USER_AGENTS = [
