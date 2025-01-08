@@ -1,5 +1,5 @@
 import streamlit as st
-import cloudscraper
+from requests_html import HTMLSession
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin
 import time
@@ -7,28 +7,44 @@ import json
 
 def parse_og_metadata(url):
     debug_container = st.empty()
+    session = HTMLSession()
     
     try:
-        debug_container.info("Creating scraper...")
-        scraper = cloudscraper.create_scraper(
-            browser={
-                'browser': 'chrome',
-                'platform': 'windows',
-                'mobile': False
-            },
-            delay=10
-        )
+        # Convert to mobile URL for Coupang
+        if 'coupang.com' in url:
+            url = url.replace('www.coupang.com', 'm.coupang.com')
+            debug_container.info(f"Converting to mobile URL: {url}")
         
-        debug_container.info(f"Fetching URL: {url}")
+        # Mobile User-Agent and additional headers
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.0 Mobile/15E148 Safari/604.1',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9',
+            'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'Connection': 'keep-alive',
+            'Cache-Control': 'no-cache',
+            'Pragma': 'no-cache',
+            'Sec-Fetch-Site': 'none',
+            'Sec-Fetch-Mode': 'navigate',
+            'Sec-Fetch-User': '?1',
+            'Sec-Fetch-Dest': 'document',
+            'sec-ch-ua-mobile': '?1',
+            'sec-ch-ua-platform': '"iOS"',
+        }
         
-        response = scraper.get(url)
-        debug_container.info(f"Response Status: {response.status_code}")
+        debug_container.info("Sending request...")
+        response = session.get(url, headers=headers)
+        debug_container.info(f"Response status: {response.status_code}")
+        
+        # For debugging
+        debug_container.info(f"Response headers: {dict(response.headers)}")
         
         if response.status_code != 200:
-            debug_container.error(f"Failed to fetch URL. Status code: {response.status_code}")
-            debug_container.info(f"Response content preview: {response.text[:500]}")
+            debug_container.error(f"Failed with status code: {response.status_code}")
+            debug_container.info(f"Response preview: {response.text[:500]}")
             return None
-            
+        
+        # Parse the HTML
         soup = BeautifulSoup(response.text, 'html.parser')
         
         og_data = {
@@ -39,7 +55,7 @@ def parse_og_metadata(url):
             'url': url
         }
         
-        # Try multiple meta tag patterns
+        # Try different meta tag patterns
         og_tags = soup.find_all('meta', property=lambda x: x and x.startswith('og:'))
         if not og_tags:
             og_tags = soup.find_all('meta', attrs={'name': lambda x: x and x.startswith('og:')})
@@ -52,42 +68,37 @@ def parse_og_metadata(url):
             
             if property_name in og_data:
                 og_data[property_name] = content
-                debug_container.info(f"Found {property_name}: {content[:100]}...")
-                
+                debug_container.info(f"Found {property_name}: {content[:100] if content else 'None'}...")
+        
+        # Handle relative image URLs
         if og_data['image'] and not og_data['image'].startswith(('http://', 'https://')):
             og_data['image'] = urljoin(url, og_data['image'])
         
-        # Enhanced fallbacks
+        # Fallbacks
         if not og_data['title']:
             title_tag = soup.find('title')
             if title_tag:
                 og_data['title'] = title_tag.string
-                debug_container.info(f"Using title tag fallback: {og_data['title']}")
             else:
                 h1_tag = soup.find('h1')
                 og_data['title'] = h1_tag.string if h1_tag else None
-                if h1_tag:
-                    debug_container.info(f"Using h1 tag fallback: {og_data['title']}")
-            
+        
         if not og_data['description']:
             meta_desc = soup.find('meta', {'name': 'description'})
             if meta_desc:
                 og_data['description'] = meta_desc.get('content')
-                debug_container.info("Using meta description fallback")
             else:
                 meta_desc = soup.find('meta', {'name': 'Description'})
                 og_data['description'] = meta_desc.get('content') if meta_desc else None
-                if meta_desc:
-                    debug_container.info("Using capitalized meta Description fallback")
         
         # Check if we got any meaningful data
-        if any(value for value in og_data.values() if value):
+        if any(value for value in og_data.values()):
             debug_container.success("Successfully retrieved metadata!")
             return og_data
         else:
             debug_container.error("No metadata found in the page")
             return None
-        
+            
     except Exception as e:
         debug_container.error(f"""
         Error occurred:
@@ -95,6 +106,12 @@ def parse_og_metadata(url):
         Message: {str(e)}
         """)
         return None
+        
+    finally:
+        try:
+            session.close()
+        except:
+            pass
 
 st.set_page_config(
     page_title="OG 메타데이터 파서",
@@ -150,6 +167,10 @@ example_urls = [
     {
         "name": "다음 뉴스",
         "url": "https://news.daum.net/"
+    },
+    {
+        "name": "네이버 블로그",
+        "url": "https://blog.naver.com/"
     }
 ]
 
@@ -174,6 +195,10 @@ with col2:
 if url and parse_button:
     if not url.startswith(('http://', 'https://')):
         url = 'https://' + url
+    
+    # Warning for certain sites
+    if 'coupang.com' in url:
+        st.info("쿠팡 URL을 모바일 버전으로 변환하여 시도합니다.")
     
     with st.expander("디버그 정보", expanded=True):
         st.markdown('<div class="debug-info">', unsafe_allow_html=True)
