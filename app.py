@@ -7,16 +7,6 @@ import json
 import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-# Add proxy support
-proxies = {
-    'http': None,
-    'https': None
-}
-
-# Configure requests to disable SSL verification globally
-requests.packages.urllib3.disable_warnings()
-requests.packages.urllib3.util.ssl_.DEFAULT_CIPHERS += ':HIGH:!DH:!aNULL'
-
 USER_AGENTS = [
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
     'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
@@ -43,22 +33,18 @@ def parse_og_metadata(url, retry_count=user_agent_count):
             
             debug_container.info(f"Attempt {attempt + 1} of {retry_count} with User-Agent: {USER_AGENTS[attempt][:50]}...")
             
-            # Add proxies and SSL verification disable
             response = requests.get(
                 url, 
                 headers=headers, 
                 timeout=15,
                 verify=False,
-                allow_redirects=True,
-                proxies=proxies
+                allow_redirects=True
             )
             
             debug_container.info(f"Response Status: {response.status_code}")
-            debug_container.info(f"Response Headers: {dict(response.headers)}")
             
             if response.status_code != 200:
                 debug_container.warning(f"Failed with status {response.status_code}, trying next User-Agent...")
-                debug_container.info(f"Response Content Preview: {response.text[:500]}")
                 time.sleep(2)
                 continue
             
@@ -81,7 +67,6 @@ def parse_og_metadata(url, retry_count=user_agent_count):
                 
                 if property_name in og_data:
                     og_data[property_name] = content
-                    debug_container.info(f"Found {property_name}: {content[:100] if content else None}")
                     
             if og_data['image'] and not og_data['image'].startswith(('http://', 'https://')):
                 og_data['image'] = urljoin(url, og_data['image'])
@@ -106,11 +91,7 @@ def parse_og_metadata(url, retry_count=user_agent_count):
             time.sleep(2)
             
         except requests.RequestException as e:
-            debug_container.warning(f"""
-            Attempt {attempt + 1} failed:
-            Error Type: {type(e).__name__}
-            Error Message: {str(e)}
-            """)
+            debug_container.warning(f"Attempt {attempt + 1} failed: {str(e)}")
             if attempt < retry_count - 1:
                 time.sleep(2)
                 continue
@@ -119,11 +100,7 @@ def parse_og_metadata(url, retry_count=user_agent_count):
                 return None
                 
         except Exception as e:
-            debug_container.error(f"""
-            Unexpected error:
-            Error Type: {type(e).__name__}
-            Error Message: {str(e)}
-            """)
+            debug_container.error(f"Unexpected error: {str(e)}")
             return None
 
 st.set_page_config(
