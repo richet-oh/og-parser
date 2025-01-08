@@ -22,30 +22,42 @@ def parse_og_metadata(url, retry_count=user_agent_count):
     
     for attempt in range(retry_count):
         try:
-            headers = {
-                'User-Agent': USER_AGENTS[attempt],
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
-                'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7',
-                'Accept-Encoding': 'gzip, deflate, br',
-                'Connection': 'keep-alive',
-                'Upgrade-Insecure-Requests': '1',
-                'Sec-Fetch-Dest': 'document',
-                'Sec-Fetch-Mode': 'navigate',
-                'Sec-Fetch-Site': 'none',
-                'Sec-Fetch-User': '?1',
-                'Cache-Control': 'no-cache',
-                'Pragma': 'no-cache',
-                'DNT': '1'
-            }
+            # Customize headers based on the site
+            if 'coupang.com' in url:
+                headers = {
+                    'User-Agent': USER_AGENTS[attempt],
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+                    'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7',
+                    'Accept-Encoding': 'gzip, deflate, br',
+                    'Connection': 'keep-alive',
+                    'sec-ch-ua': '"Not_A Brand";v="8", "Chromium";v="120", "Microsoft Edge";v="120"',
+                    'sec-ch-ua-mobile': '?0',
+                    'sec-ch-ua-platform': '"Windows"',
+                    'Sec-Fetch-Dest': 'document',
+                    'Sec-Fetch-Mode': 'navigate',
+                    'Sec-Fetch-Site': 'none',
+                    'Sec-Fetch-User': '?1',
+                    'Upgrade-Insecure-Requests': '1',
+                    'Referer': 'https://www.google.com/',
+                    'Cache-Control': 'max-age=0',
+                }
+                # Convert to mobile URL for Coupang
+                url = url.replace('www.coupang.com', 'm.coupang.com')
+            else:
+                headers = {
+                    'User-Agent': USER_AGENTS[attempt],
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                    'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7',
+                    'Accept-Encoding': 'gzip, deflate, br',
+                    'Connection': 'keep-alive',
+                    'Upgrade-Insecure-Requests': '1',
+                    'Cache-Control': 'no-cache',
+                }
             
             status_container.info(f"Attempt {attempt + 1} of {retry_count} with User-Agent: {USER_AGENTS[attempt][:50]}...")
             
             session = requests.Session()
             
-            # First make a HEAD request
-            session.head(url, headers=headers, timeout=5, verify=False)
-            
-            # Then make the GET request
             response = session.get(
                 url, 
                 headers=headers, 
@@ -53,6 +65,12 @@ def parse_og_metadata(url, retry_count=user_agent_count):
                 verify=False,
                 allow_redirects=True
             )
+            
+            if response.status_code == 403:
+                status_container.warning(f"Access forbidden (403). Trying next User-Agent...")
+                time.sleep(2)
+                continue
+                
             response.raise_for_status()
             
             soup = BeautifulSoup(response.text, 'html.parser')
@@ -172,12 +190,16 @@ st.subheader('사이트 URL의 og 메타데이터 파싱 가능 여부를 파악
 
 example_urls = [
     {
-        "name": "G마켓 상품",
-        "url": "https://item.gmarket.co.kr/Item?goodsCode=2522803435"
+        "name": "네이버 뉴스",
+        "url": "https://news.naver.com/main/main.naver?mode=LSD&mid=shm&sid1=105"
     },
     {
-        "name": "쿠팡 상품",
-        "url": "https://www.coupang.com/vp/products/7662242926?itemId=20416745722&vendorItemId=87498534456"
+        "name": "다음 뉴스",
+        "url": "https://news.daum.net/"
+    },
+    {
+        "name": "네이버 블로그",
+        "url": "https://blog.naver.com/"
     }
 ]
 
@@ -202,6 +224,10 @@ with col2:
 if url and parse_button:
     if not url.startswith(('http://', 'https://')):
         url = 'https://' + url
+    
+    # Warning for certain sites
+    if 'coupang.com' in url or 'gmarket.co.kr' in url:
+        st.warning("쇼핑몰 사이트의 경우 보안 정책으로 인해 파싱이 제한될 수 있습니다.")
         
     result = parse_og_metadata(url)
         
