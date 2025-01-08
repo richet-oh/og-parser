@@ -109,31 +109,65 @@ st.markdown("""
         border-radius: 5px;
         margin: 10px 0;
     }
+    .example-link {
+        word-break: break-all;
+        padding: 5px;
+        background-color: #ffffff;
+        border-radius: 3px;
+        margin: 5px 0;
+        display: block;
+    }
+    .copy-button {
+        background-color: #4CAF50;
+        border: none;
+        color: white;
+        padding: 5px 10px;
+        text-align: center;
+        text-decoration: none;
+        display: inline-block;
+        font-size: 12px;
+        margin: 2px;
+        cursor: pointer;
+        border-radius: 3px;
+    }
     </style>
 """, unsafe_allow_html=True)
 
-st.title('🔍 URL 메타데이터 파서')
+st.title('🔍 URL OG 메타데이터 파서')
 
 # Example sites section
-st.subheader('사이트 URL 파싱 예시 사이트')
+st.subheader('사이트 URL의 og 메타데이터 파싱 가능 여부를 파악할 수 있습니다.')
+
+example_urls = [
+    {
+        "name": "G마켓 상품",
+        "url": "https://item.gmarket.co.kr/Item?goodsCode=2522803435"
+    },
+    {
+        "name": "쿠팡 상품",
+        "url": "https://www.coupang.com/vp/products/7662242926?itemId=20416745722&vendorItemId=87498534456&src=1032001&spec=10305197&addtag=400&ctag=7662242926&lptag=I20416745722&itime=20250107174615&pageType=PRODUCT&pageValue=7662242926&wPcid=17231851582106320827240&wRef=cr.shopping.naver.com&wTime=20250107174615&redirect=landing&mcid=901de7abb920473e9abfb00a23664f93&n_keyword=&n_ad_group=&n_ad=&n_rank=&n_media=&n_keyword_id=&n_campaign_type=&n_query="
+    }
+]
+
+# JavaScript for copy functionality
 st.markdown("""
-<div class="example-sites">
-<b>뉴스 사이트:</b>
-- https://www.chosun.com
-- https://www.hani.co.kr
-- https://www.yna.co.kr
-
-<b>쇼핑몰:</b>
-- https://www.coupang.com
-- https://www.gmarket.co.kr
-- https://www.11st.co.kr
-
-<b>SNS:</b>
-- https://twitter.com
-- https://www.instagram.com
-- https://www.facebook.com
-</div>
+<script>
+function copyToClipboard(text) {
+    navigator.clipboard.writeText(text);
+}
+</script>
 """, unsafe_allow_html=True)
+
+# Display examples with copy buttons
+for example in example_urls:
+    st.markdown(f"""
+    <div class="example-sites">
+        <b>{example['name']}</b>
+        <div class="example-link">
+            {example['url']}
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
 
 col1, col2 = st.columns([2, 1])
 
@@ -199,5 +233,5 @@ if url and parse_button:
 
 st.markdown("""
 ---
-Streamlit으로 제작됨 ❤️
+by Richet
 """)
