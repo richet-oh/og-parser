@@ -2,14 +2,13 @@ import streamlit as st
 import requests
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin
-import random
 import urllib3
 import time
 import json
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-# List of common user agents for rotation
+# List of user agents to iterate through
 USER_AGENTS = [
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
     'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
@@ -18,73 +17,96 @@ USER_AGENTS = [
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36 Edg/91.0.864.59'
 ]
 
-@st.cache_data(ttl=300)  # Cache the results for 5 minutes
+@st.cache_data(ttl=300)
 def parse_og_metadata(url):
-    headers = {
-        'User-Agent': random.choice(USER_AGENTS),
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-        'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7',
-        'Accept-Encoding': 'gzip, deflate, br',
-        'Connection': 'keep-alive',
-        'Upgrade-Insecure-Requests': '1',
-        'Cache-Control': 'no-cache',
-        'Pragma': 'no-cache'
-    }
-    
     session = requests.Session()
     
-    try:
-        response = session.get(
-            url, 
-            headers=headers, 
-            timeout=30,
-            verify=False,
-            allow_redirects=True
-        )
-        response.raise_for_status()
-        
-        soup = BeautifulSoup(response.text, 'html.parser')
-        
-        og_data = {
-            'title': None,
-            'description': None,
-            'image': None,
-            'site_name': None,
-            'url': url
-        }
-        
-        # Try different meta tag patterns
-        og_tags = soup.find_all(['meta', 'title'], attrs={'property': lambda x: x and x.startswith('og:')})
-        if not og_tags:
-            og_tags = soup.find_all(['meta', 'title'], attrs={'name': lambda x: x and x.startswith('og:')})
-        
-        for tag in og_tags:
-            property_name = tag.get('property', tag.get('name', '')).replace('og:', '')
-            content = tag.get('content')
+    # Try each user agent in sequence
+    for user_agent in USER_AGENTS:
+        try:
+            headers = {
+                'User-Agent': user_agent,
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7',
+                'Accept-Encoding': 'gzip, deflate, br',
+                'Connection': 'keep-alive',
+                'Upgrade-Insecure-Requests': '1',
+                'Cache-Control': 'no-cache',
+                'Pragma': 'no-cache'
+            }
             
-            if property_name in og_data:
-                og_data[property_name] = content
-        
-        # Fallbacks
-        if not og_data['title']:
-            title_tag = soup.find('title')
-            og_data['title'] = title_tag.string if title_tag else None
+            st.info(f"Trying with User-Agent: {user_agent[:50]}...")
             
-        if not og_data['description']:
-            desc_tag = soup.find('meta', {'name': 'description'})
-            og_data['description'] = desc_tag.get('content') if desc_tag else None
-        
-        # Handle relative image URLs
-        if og_data['image'] and not og_data['image'].startswith(('http://', 'https://')):
-            og_data['image'] = urljoin(url, og_data['image'])
-        
-        return og_data
-        
-    except Exception as e:
-        st.error(f"Error: {str(e)}")
-        return None
-    finally:
-        session.close()
+            response = session.get(
+                url, 
+                headers=headers, 
+                timeout=30,
+                verify=False,
+                allow_redirects=True
+            )
+            response.raise_for_status()
+            
+            soup = BeautifulSoup(response.text, 'html.parser')
+            
+            og_data = {
+                'title': None,
+                'description': None,
+                'image': None,
+                'site_name': None,
+                'url': url
+            }
+            
+            # Try different meta tag patterns
+            og_tags = soup.find_all(['meta', 'title'], attrs={'property': lambda x: x and x.startswith('og:')})
+            if not og_tags:
+                og_tags = soup.find_all(['meta', 'title'], attrs={'name': lambda x: x and x.startswith('og:')})
+            
+            for tag in og_tags:
+                property_name = tag.get('property', tag.get('name', '')).replace('og:', '')
+                content = tag.get('content')
+                
+                if property_name in og_data:
+                    og_data[property_name] = content
+            
+            # If we found any OG data, consider it a success
+            if any(value is not None for value in og_data.values()):
+                st.success(f"Successfully retrieved metadata with User-Agent: {user_agent[:50]}")
+                
+                # Fallbacks
+                if not og_data['title']:
+                    title_tag = soup.find('title')
+                    og_data['title'] = title_tag.string if title_tag else None
+                    
+                if not og_data['description']:
+                    desc_tag = soup.find('meta', {'name': 'description'})
+                    og_data['description'] = desc_tag.get('content') if desc_tag else None
+                
+                # Handle relative image URLs
+                if og_data['image'] and not og_data['image'].startswith(('http://', 'https://')):
+                    og_data['image'] = urljoin(url, og_data['image'])
+                
+                return og_data
+            
+            # If no OG data found, continue to next user agent
+            st.warning(f"No metadata found with current User-Agent, trying next...")
+            time.sleep(2)  # Wait before trying next user agent
+            
+        except requests.Timeout:
+            st.warning(f"Timeout with current User-Agent, trying next...")
+            time.sleep(2)
+            continue
+            
+        except requests.RequestException as e:
+            st.warning(f"Request failed: {str(e)}, trying next User-Agent...")
+            time.sleep(2)
+            continue
+            
+        except Exception as e:
+            st.error(f"Unexpected error: {str(e)}")
+            continue
+    
+    st.error("All User-Agents attempted without success.")
+    return None
 
 st.set_page_config(
     page_title="OG 메타데이터 파서",
