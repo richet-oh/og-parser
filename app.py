@@ -2,20 +2,18 @@ import streamlit as st
 import requests
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin
-import random
 import urllib3
 import time
 import json
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-# List of common user agents for rotation
 USER_AGENTS = [
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:89.0) Gecko/20100101 Firefox/89.0',
-    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.1.1 Safari/605.1.15',
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36 Edg/91.0.864.59'
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0'
 ]
 
 user_agent_count = len(USER_AGENTS)
@@ -25,18 +23,30 @@ def parse_og_metadata(url, retry_count=user_agent_count):
     for attempt in range(retry_count):
         try:
             headers = {
-                'User-Agent': USER_AGENTS[attempt % user_agent_count],
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-                'Accept-Language': 'en-US,en;q=0.5',
+                'User-Agent': USER_AGENTS[attempt],
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+                'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7',
                 'Accept-Encoding': 'gzip, deflate, br',
                 'Connection': 'keep-alive',
                 'Upgrade-Insecure-Requests': '1',
-                'Cache-Control': 'max-age=0'
+                'Sec-Fetch-Dest': 'document',
+                'Sec-Fetch-Mode': 'navigate',
+                'Sec-Fetch-Site': 'none',
+                'Sec-Fetch-User': '?1',
+                'Cache-Control': 'no-cache',
+                'Pragma': 'no-cache',
+                'DNT': '1'
             }
             
-            status_container.info(f"Attempt {attempt + 1} of {retry_count}...")
+            status_container.info(f"Attempt {attempt + 1} of {retry_count} with User-Agent: {USER_AGENTS[attempt][:50]}...")
             
-            response = requests.get(
+            session = requests.Session()
+            
+            # First make a HEAD request
+            session.head(url, headers=headers, timeout=5, verify=False)
+            
+            # Then make the GET request
+            response = session.get(
                 url, 
                 headers=headers, 
                 timeout=15,
@@ -55,10 +65,13 @@ def parse_og_metadata(url, retry_count=user_agent_count):
                 'url': url
             }
             
+            # Try multiple meta tag patterns
             og_tags = soup.find_all('meta', property=lambda x: x and x.startswith('og:'))
+            if not og_tags:
+                og_tags = soup.find_all('meta', attrs={'name': lambda x: x and x.startswith('og:')})
             
             for tag in og_tags:
-                property_name = tag.get('property', '').replace('og:', '')
+                property_name = tag.get('property', tag.get('name', '')).replace('og:', '')
                 content = tag.get('content')
                 
                 if property_name in og_data:
@@ -67,18 +80,34 @@ def parse_og_metadata(url, retry_count=user_agent_count):
             if og_data['image'] and not og_data['image'].startswith(('http://', 'https://')):
                 og_data['image'] = urljoin(url, og_data['image'])
             
+            # Enhanced fallbacks
             if not og_data['title']:
-                og_data['title'] = soup.title.string if soup.title else None
+                title_tag = soup.find('title')
+                if title_tag:
+                    og_data['title'] = title_tag.string
+                else:
+                    h1_tag = soup.find('h1')
+                    og_data['title'] = h1_tag.string if h1_tag else None
                 
             if not og_data['description']:
                 meta_desc = soup.find('meta', {'name': 'description'})
-                og_data['description'] = meta_desc['content'] if meta_desc else None
-                
-            status_container.success("Successfully retrieved metadata!")
-            return og_data
+                if meta_desc:
+                    og_data['description'] = meta_desc.get('content')
+                else:
+                    meta_desc = soup.find('meta', {'name': 'Description'})
+                    og_data['description'] = meta_desc.get('content') if meta_desc else None
+            
+            # Check if we got any meaningful data
+            if any(value for value in og_data.values()):
+                status_container.success(f"Successfully retrieved metadata with User-Agent #{attempt + 1}!")
+                return og_data
+            else:
+                status_container.warning("No metadata found in this attempt...")
+                time.sleep(2)
+                continue
             
         except requests.Timeout:
-            status_container.warning(f"Attempt {attempt + 1} timed out. Retrying...")
+            status_container.warning(f"Attempt {attempt + 1} timed out. Trying next User-Agent...")
             time.sleep(2)
             
         except requests.RequestException as e:
@@ -87,14 +116,21 @@ def parse_og_metadata(url, retry_count=user_agent_count):
                 time.sleep(2)
                 continue
             else:
-                status_container.error("All retry attempts failed.")
+                status_container.error("All User-Agents attempted without success.")
                 return None
                 
         except Exception as e:
             status_container.error(f"Unexpected error: {str(e)}")
             return None
+        
+        finally:
+            try:
+                session.close()
+            except:
+                pass
 
-# Streamlit UI
+    return None
+
 st.set_page_config(
     page_title="OG 메타데이터 파서",
     page_icon="🔍",
