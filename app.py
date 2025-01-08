@@ -2,63 +2,45 @@ import streamlit as st
 import requests
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin
-import urllib3
+import random
 import time
+import urllib3
 import json
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 USER_AGENTS = [
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0',
-    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15',
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0'
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:89.0) Gecko/20100101 Firefox/89.0',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.1.1 Safari/605.1.15',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36 Edg/91.0.864.59'
 ]
 
-user_agent_count = len(USER_AGENTS)
-def parse_og_metadata(url, retry_count=user_agent_count):
-    status_container = st.empty()
+def parse_og_metadata(url, retry_count=3):
+    debug_container = st.empty()
     
     for attempt in range(retry_count):
         try:
-            # Customize headers based on the site
-            if 'coupang.com' in url:
-                headers = {
-                    'User-Agent': USER_AGENTS[attempt],
-                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-                    'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7',
-                    'Accept-Encoding': 'gzip, deflate, br',
-                    'Connection': 'keep-alive',
-                    'sec-ch-ua': '"Not_A Brand";v="8", "Chromium";v="120", "Microsoft Edge";v="120"',
-                    'sec-ch-ua-mobile': '?0',
-                    'sec-ch-ua-platform': '"Windows"',
-                    'Sec-Fetch-Dest': 'document',
-                    'Sec-Fetch-Mode': 'navigate',
-                    'Sec-Fetch-Site': 'none',
-                    'Sec-Fetch-User': '?1',
-                    'Upgrade-Insecure-Requests': '1',
-                    'Referer': 'https://www.google.com/',
-                    'Cache-Control': 'max-age=0',
-                }
-                # Convert to mobile URL for Coupang
-                url = url.replace('www.coupang.com', 'm.coupang.com')
-            else:
-                headers = {
-                    'User-Agent': USER_AGENTS[attempt],
-                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-                    'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7',
-                    'Accept-Encoding': 'gzip, deflate, br',
-                    'Connection': 'keep-alive',
-                    'Upgrade-Insecure-Requests': '1',
-                    'Cache-Control': 'no-cache',
-                }
+            # Exactly the same headers as local version
+            headers = {
+                'User-Agent': random.choice(USER_AGENTS),
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.5',
+                'Accept-Encoding': 'gzip, deflate, br',
+                'Connection': 'keep-alive',
+                'Upgrade-Insecure-Requests': '1',
+                'Cache-Control': 'max-age=0'
+            }
             
-            status_container.info(f"Attempt {attempt + 1} of {retry_count} with User-Agent: {USER_AGENTS[attempt][:50]}...")
+            debug_container.info(f"""
+            Attempt {attempt + 1}:
+            URL: {url}
+            Headers: {json.dumps(headers, indent=2)}
+            """)
             
-            session = requests.Session()
-            
-            response = session.get(
+            # Make request exactly as in local version
+            response = requests.get(
                 url, 
                 headers=headers, 
                 timeout=15,
@@ -66,11 +48,12 @@ def parse_og_metadata(url, retry_count=user_agent_count):
                 allow_redirects=True
             )
             
-            if response.status_code == 403:
-                status_container.warning(f"Access forbidden (403). Trying next User-Agent...")
-                time.sleep(2)
-                continue
-                
+            # Debug response
+            debug_container.info(f"""
+            Response Status: {response.status_code}
+            Response Headers: {json.dumps(dict(response.headers), indent=2)}
+            """)
+            
             response.raise_for_status()
             
             soup = BeautifulSoup(response.text, 'html.parser')
@@ -83,71 +66,56 @@ def parse_og_metadata(url, retry_count=user_agent_count):
                 'url': url
             }
             
-            # Try multiple meta tag patterns
+            # Find all meta tags with og: prefix
             og_tags = soup.find_all('meta', property=lambda x: x and x.startswith('og:'))
-            if not og_tags:
-                og_tags = soup.find_all('meta', attrs={'name': lambda x: x and x.startswith('og:')})
             
+            # Extract og metadata
             for tag in og_tags:
-                property_name = tag.get('property', tag.get('name', '')).replace('og:', '')
+                property_name = tag.get('property', '').replace('og:', '')
                 content = tag.get('content')
                 
                 if property_name in og_data:
                     og_data[property_name] = content
                     
+            # If og:image is relative URL, make it absolute
             if og_data['image'] and not og_data['image'].startswith(('http://', 'https://')):
                 og_data['image'] = urljoin(url, og_data['image'])
             
-            # Enhanced fallbacks
+            # Fallbacks if og tags are not found
             if not og_data['title']:
-                title_tag = soup.find('title')
-                if title_tag:
-                    og_data['title'] = title_tag.string
-                else:
-                    h1_tag = soup.find('h1')
-                    og_data['title'] = h1_tag.string if h1_tag else None
+                og_data['title'] = soup.title.string if soup.title else None
                 
             if not og_data['description']:
                 meta_desc = soup.find('meta', {'name': 'description'})
-                if meta_desc:
-                    og_data['description'] = meta_desc.get('content')
-                else:
-                    meta_desc = soup.find('meta', {'name': 'Description'})
-                    og_data['description'] = meta_desc.get('content') if meta_desc else None
-            
-            # Check if we got any meaningful data
-            if any(value for value in og_data.values()):
-                status_container.success(f"Successfully retrieved metadata with User-Agent #{attempt + 1}!")
-                return og_data
-            else:
-                status_container.warning("No metadata found in this attempt...")
-                time.sleep(2)
-                continue
+                og_data['description'] = meta_desc['content'] if meta_desc else None
+                
+            debug_container.success(f"Success on attempt {attempt + 1}")
+            return og_data
             
         except requests.Timeout:
-            status_container.warning(f"Attempt {attempt + 1} timed out. Trying next User-Agent...")
+            debug_container.warning(f"Attempt {attempt + 1} timed out. Retrying...")
             time.sleep(2)
             
         except requests.RequestException as e:
-            status_container.warning(f"Attempt {attempt + 1} failed: {str(e)}")
+            debug_container.warning(f"""
+            Attempt {attempt + 1} failed:
+            Error Type: {type(e).__name__}
+            Error Message: {str(e)}
+            """)
             if attempt < retry_count - 1:
                 time.sleep(2)
                 continue
             else:
-                status_container.error("All User-Agents attempted without success.")
+                debug_container.error("All retry attempts failed.")
                 return None
                 
         except Exception as e:
-            status_container.error(f"Unexpected error: {str(e)}")
+            debug_container.error(f"""
+            Unexpected error:
+            Error Type: {type(e).__name__}
+            Error Message: {str(e)}
+            """)
             return None
-        
-        finally:
-            try:
-                session.close()
-            except:
-                pass
-
-    return None
 
 st.set_page_config(
     page_title="OG 메타데이터 파서",
@@ -186,7 +154,7 @@ st.markdown("""
 
 st.title('🔍 URL OG 메타데이터 파서')
 
-st.subheader('사이트 URL의 og 메타데이터 파싱 가능 여부를 파악할 수 있습니다.')
+st.subheader('사이트 URL의 og 메타데이터를 파싱합니다.')
 
 example_urls = [
     {
@@ -196,10 +164,6 @@ example_urls = [
     {
         "name": "다음 뉴스",
         "url": "https://news.daum.net/"
-    },
-    {
-        "name": "네이버 블로그",
-        "url": "https://blog.naver.com/"
     }
 ]
 
@@ -224,10 +188,6 @@ with col2:
 if url and parse_button:
     if not url.startswith(('http://', 'https://')):
         url = 'https://' + url
-    
-    # Warning for certain sites
-    if 'coupang.com' in url or 'gmarket.co.kr' in url:
-        st.warning("쇼핑몰 사이트의 경우 보안 정책으로 인해 파싱이 제한될 수 있습니다.")
         
     result = parse_og_metadata(url)
         
