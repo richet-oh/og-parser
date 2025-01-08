@@ -2,13 +2,14 @@ import streamlit as st
 import requests
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin
+import random
 import urllib3
 import time
 import json
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-# List of user agents to iterate through
+# List of common user agents for rotation
 USER_AGENTS = [
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
     'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
@@ -17,30 +18,28 @@ USER_AGENTS = [
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36 Edg/91.0.864.59'
 ]
 
-@st.cache_data(ttl=300)
-def parse_og_metadata(url):
-    session = requests.Session()
+user_agent_count = len(USER_AGENTS)
+def parse_og_metadata(url, retry_count=user_agent_count):
+    status_container = st.empty()
     
-    # Try each user agent in sequence
-    for user_agent in USER_AGENTS:
+    for attempt in range(retry_count):
         try:
             headers = {
-                'User-Agent': user_agent,
+                'User-Agent': USER_AGENTS[attempt % user_agent_count],
                 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-                'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7',
+                'Accept-Language': 'en-US,en;q=0.5',
                 'Accept-Encoding': 'gzip, deflate, br',
                 'Connection': 'keep-alive',
                 'Upgrade-Insecure-Requests': '1',
-                'Cache-Control': 'no-cache',
-                'Pragma': 'no-cache'
+                'Cache-Control': 'max-age=0'
             }
             
-            st.info(f"Trying with User-Agent: {user_agent[:50]}...")
+            status_container.info(f"Attempt {attempt + 1} of {retry_count}...")
             
-            response = session.get(
+            response = requests.get(
                 url, 
                 headers=headers, 
-                timeout=30,
+                timeout=15,
                 verify=False,
                 allow_redirects=True
             )
@@ -56,58 +55,46 @@ def parse_og_metadata(url):
                 'url': url
             }
             
-            # Try different meta tag patterns
-            og_tags = soup.find_all(['meta', 'title'], attrs={'property': lambda x: x and x.startswith('og:')})
-            if not og_tags:
-                og_tags = soup.find_all(['meta', 'title'], attrs={'name': lambda x: x and x.startswith('og:')})
+            og_tags = soup.find_all('meta', property=lambda x: x and x.startswith('og:'))
             
             for tag in og_tags:
-                property_name = tag.get('property', tag.get('name', '')).replace('og:', '')
+                property_name = tag.get('property', '').replace('og:', '')
                 content = tag.get('content')
                 
                 if property_name in og_data:
                     og_data[property_name] = content
-            
-            # If we found any OG data, consider it a success
-            if any(value is not None for value in og_data.values()):
-                st.success(f"Successfully retrieved metadata with User-Agent: {user_agent[:50]}")
-                
-                # Fallbacks
-                if not og_data['title']:
-                    title_tag = soup.find('title')
-                    og_data['title'] = title_tag.string if title_tag else None
                     
-                if not og_data['description']:
-                    desc_tag = soup.find('meta', {'name': 'description'})
-                    og_data['description'] = desc_tag.get('content') if desc_tag else None
-                
-                # Handle relative image URLs
-                if og_data['image'] and not og_data['image'].startswith(('http://', 'https://')):
-                    og_data['image'] = urljoin(url, og_data['image'])
-                
-                return og_data
+            if og_data['image'] and not og_data['image'].startswith(('http://', 'https://')):
+                og_data['image'] = urljoin(url, og_data['image'])
             
-            # If no OG data found, continue to next user agent
-            st.warning(f"No metadata found with current User-Agent, trying next...")
-            time.sleep(2)  # Wait before trying next user agent
+            if not og_data['title']:
+                og_data['title'] = soup.title.string if soup.title else None
+                
+            if not og_data['description']:
+                meta_desc = soup.find('meta', {'name': 'description'})
+                og_data['description'] = meta_desc['content'] if meta_desc else None
+                
+            status_container.success("Successfully retrieved metadata!")
+            return og_data
             
         except requests.Timeout:
-            st.warning(f"Timeout with current User-Agent, trying next...")
+            status_container.warning(f"Attempt {attempt + 1} timed out. Retrying...")
             time.sleep(2)
-            continue
             
         except requests.RequestException as e:
-            st.warning(f"Request failed: {str(e)}, trying next User-Agent...")
-            time.sleep(2)
-            continue
-            
+            status_container.warning(f"Attempt {attempt + 1} failed: {str(e)}")
+            if attempt < retry_count - 1:
+                time.sleep(2)
+                continue
+            else:
+                status_container.error("All retry attempts failed.")
+                return None
+                
         except Exception as e:
-            st.error(f"Unexpected error: {str(e)}")
-            continue
-    
-    st.error("All User-Agents attempted without success.")
-    return None
+            status_container.error(f"Unexpected error: {str(e)}")
+            return None
 
+# Streamlit UI
 st.set_page_config(
     page_title="OG 메타데이터 파서",
     page_icon="🔍",
@@ -158,7 +145,6 @@ example_urls = [
     }
 ]
 
-# Display examples
 for example in example_urls:
     st.markdown(f"""
     <div class="example-sites">
@@ -181,8 +167,7 @@ if url and parse_button:
     if not url.startswith(('http://', 'https://')):
         url = 'https://' + url
         
-    with st.spinner('메타데이터 가져오는 중...'):
-        result = parse_og_metadata(url)
+    result = parse_og_metadata(url)
         
     if result:
         st.markdown("<div class='output-container'>", unsafe_allow_html=True)
@@ -226,9 +211,6 @@ if url and parse_button:
             file_name="og_metadata.json",
             mime="application/json"
         )
-        
-    else:
-        st.error('메타데이터를 가져오지 못했습니다. URL을 확인하고 다시 시도해주세요.')
 
 st.markdown("""
 ---
