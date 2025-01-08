@@ -5,6 +5,7 @@ from urllib.parse import urljoin
 import random
 import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+import time
 
 # List of common user agents for rotation
 USER_AGENTS = [
