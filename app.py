@@ -1,121 +1,100 @@
 import streamlit as st
-import requests
+import cloudscraper
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin
-import random
 import time
-import urllib3
 import json
 
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-
-USER_AGENTS = [
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:89.0) Gecko/20100101 Firefox/89.0',
-    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.1.1 Safari/605.1.15',
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36 Edg/91.0.864.59'
-]
-
-def parse_og_metadata(url, retry_count=10):
+def parse_og_metadata(url):
     debug_container = st.empty()
     
-    for attempt in range(retry_count):
-        try:
-            # Exactly the same headers as local version
-            headers = {
-                'User-Agent': random.choice(USER_AGENTS),
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-                'Accept-Language': 'en-US,en;q=0.5',
-                'Accept-Encoding': 'gzip, deflate, br',
-                'Connection': 'keep-alive',
-                'Upgrade-Insecure-Requests': '1',
-                'Cache-Control': 'max-age=0'
-            }
-            
-            debug_container.info(f"""
-            Attempt {attempt + 1}:
-            URL: {url}
-            Headers: {json.dumps(headers, indent=2)}
-            """)
-            
-            # Make request exactly as in local version
-            response = requests.get(
-                url, 
-                headers=headers, 
-                timeout=15,
-                verify=False,
-                allow_redirects=True
-            )
-            
-            # Debug response
-            debug_container.info(f"""
-            Response Status: {response.status_code}
-            Response Headers: {json.dumps(dict(response.headers), indent=2)}
-            """)
-            
-            response.raise_for_status()
-            
-            soup = BeautifulSoup(response.text, 'html.parser')
-            
-            og_data = {
-                'title': None,
-                'description': None,
-                'image': None,
-                'site_name': None,
-                'url': url
-            }
-            
-            # Find all meta tags with og: prefix
-            og_tags = soup.find_all('meta', property=lambda x: x and x.startswith('og:'))
-            
-            # Extract og metadata
-            for tag in og_tags:
-                property_name = tag.get('property', '').replace('og:', '')
-                content = tag.get('content')
-                
-                if property_name in og_data:
-                    og_data[property_name] = content
-                    
-            # If og:image is relative URL, make it absolute
-            if og_data['image'] and not og_data['image'].startswith(('http://', 'https://')):
-                og_data['image'] = urljoin(url, og_data['image'])
-            
-            # Fallbacks if og tags are not found
-            if not og_data['title']:
-                og_data['title'] = soup.title.string if soup.title else None
-                
-            if not og_data['description']:
-                meta_desc = soup.find('meta', {'name': 'description'})
-                og_data['description'] = meta_desc['content'] if meta_desc else None
-                
-            debug_container.success(f"Success on attempt {attempt + 1}")
-            return og_data
-            
-        except requests.Timeout:
-            debug_container.warning(f"Attempt {attempt + 1} timed out. Retrying...")
-            time.sleep(2)
-            
-        except requests.RequestException as e:
-            debug_container.warning(f"""
-            Attempt {attempt + 1} failed:
-            Error Type: {type(e).__name__}
-            Error Message: {str(e)}
-            """)
-            if attempt < retry_count - 1:
-                time.sleep(2)
-                continue
-            else:
-                debug_container.error("All retry attempts failed.")
-                return None
-                
-        except Exception as e:
-            debug_container.error(f"""
-            Unexpected error:
-            Error Type: {type(e).__name__}
-            Error Message: {str(e)}
-            """)
+    try:
+        debug_container.info("Creating scraper...")
+        scraper = cloudscraper.create_scraper(
+            browser={
+                'browser': 'chrome',
+                'platform': 'windows',
+                'mobile': False
+            },
+            delay=10
+        )
+        
+        debug_container.info(f"Fetching URL: {url}")
+        
+        response = scraper.get(url)
+        debug_container.info(f"Response Status: {response.status_code}")
+        
+        if response.status_code != 200:
+            debug_container.error(f"Failed to fetch URL. Status code: {response.status_code}")
+            debug_container.info(f"Response content preview: {response.text[:500]}")
             return None
+            
+        soup = BeautifulSoup(response.text, 'html.parser')
+        
+        og_data = {
+            'title': None,
+            'description': None,
+            'image': None,
+            'site_name': None,
+            'url': url
+        }
+        
+        # Try multiple meta tag patterns
+        og_tags = soup.find_all('meta', property=lambda x: x and x.startswith('og:'))
+        if not og_tags:
+            og_tags = soup.find_all('meta', attrs={'name': lambda x: x and x.startswith('og:')})
+        
+        debug_container.info(f"Found {len(og_tags)} OG tags")
+        
+        for tag in og_tags:
+            property_name = tag.get('property', tag.get('name', '')).replace('og:', '')
+            content = tag.get('content')
+            
+            if property_name in og_data:
+                og_data[property_name] = content
+                debug_container.info(f"Found {property_name}: {content[:100]}...")
+                
+        if og_data['image'] and not og_data['image'].startswith(('http://', 'https://')):
+            og_data['image'] = urljoin(url, og_data['image'])
+        
+        # Enhanced fallbacks
+        if not og_data['title']:
+            title_tag = soup.find('title')
+            if title_tag:
+                og_data['title'] = title_tag.string
+                debug_container.info(f"Using title tag fallback: {og_data['title']}")
+            else:
+                h1_tag = soup.find('h1')
+                og_data['title'] = h1_tag.string if h1_tag else None
+                if h1_tag:
+                    debug_container.info(f"Using h1 tag fallback: {og_data['title']}")
+            
+        if not og_data['description']:
+            meta_desc = soup.find('meta', {'name': 'description'})
+            if meta_desc:
+                og_data['description'] = meta_desc.get('content')
+                debug_container.info("Using meta description fallback")
+            else:
+                meta_desc = soup.find('meta', {'name': 'Description'})
+                og_data['description'] = meta_desc.get('content') if meta_desc else None
+                if meta_desc:
+                    debug_container.info("Using capitalized meta Description fallback")
+        
+        # Check if we got any meaningful data
+        if any(value for value in og_data.values() if value):
+            debug_container.success("Successfully retrieved metadata!")
+            return og_data
+        else:
+            debug_container.error("No metadata found in the page")
+            return None
+        
+    except Exception as e:
+        debug_container.error(f"""
+        Error occurred:
+        Type: {type(e).__name__}
+        Message: {str(e)}
+        """)
+        return None
 
 st.set_page_config(
     page_title="OG 메타데이터 파서",
@@ -148,6 +127,13 @@ st.markdown("""
         border-radius: 3px;
         margin: 5px 0;
         display: block;
+    }
+    .debug-info {
+        font-family: monospace;
+        padding: 10px;
+        background-color: #f8f9fa;
+        border-radius: 5px;
+        margin: 10px 0;
     }
     </style>
 """, unsafe_allow_html=True)
@@ -188,8 +174,11 @@ with col2:
 if url and parse_button:
     if not url.startswith(('http://', 'https://')):
         url = 'https://' + url
-        
-    result = parse_og_metadata(url)
+    
+    with st.expander("디버그 정보", expanded=True):
+        st.markdown('<div class="debug-info">', unsafe_allow_html=True)
+        result = parse_og_metadata(url)
+        st.markdown('</div>', unsafe_allow_html=True)
         
     if result:
         st.markdown("<div class='output-container'>", unsafe_allow_html=True)
